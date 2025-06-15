@@ -5,6 +5,8 @@ import eyed3
 import openai
 from dotenv import load_dotenv
 import logging
+import pygame
+import threading
 
 # eyed3 로그 레벨 설정 (경고 메시지 숨기기)
 logging.getLogger("eyed3").setLevel(logging.ERROR)
@@ -46,6 +48,14 @@ class MP3EditorApp:
 
         self.file_list = []
         self.mp3_data = []
+        
+        # 오디오 플레이어 초기화
+        pygame.mixer.init()
+        self.is_playing = False
+        self.current_playing_file = None
+        self.song_length = 0
+        self.current_pos = 0
+        self.seeking = False
 
         # UI 구성
         # 상단 버튼 프레임
@@ -90,9 +100,51 @@ class MP3EditorApp:
         )
         self.btn_save_all.pack(side=tk.LEFT, padx=5)
 
-       
-
+        # 시크바 프레임 (테이블 아래)
+        seekbar_frame = tk.Frame(root)
+        seekbar_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
         
+        # 현재 재생 중인 파일 정보 라벨
+        self.current_file_label = tk.Label(seekbar_frame, text="재생 중인 파일 없음", font=("Arial", 9))
+        self.current_file_label.pack(anchor=tk.W)
+        
+        # 시간 정보와 시크바를 담을 프레임
+        time_frame = tk.Frame(seekbar_frame)
+        time_frame.pack(fill=tk.X, pady=(2, 0))
+        
+        # 재생/일시정지 버튼 (시크바 왼쪽)
+        self.btn_play_pause = tk.Button(
+            time_frame,
+            text="▶️",
+            command=self.toggle_play_pause,
+            width=3
+        )
+        self.btn_play_pause.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # 현재 시간 라벨
+        self.current_time_label = tk.Label(time_frame, text="00:00", font=("Arial", 8))
+        self.current_time_label.pack(side=tk.LEFT)
+        
+        # 시크바
+        self.seekbar = tk.Scale(time_frame, from_=0, to=100, orient=tk.HORIZONTAL, 
+                               showvalue=False, command=self.on_seekbar_change)
+        self.seekbar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
+        
+        # 시크바 마우스 이벤트 바인딩
+        self.seekbar.bind("<Button-1>", self.on_seekbar_press)
+        self.seekbar.bind("<ButtonRelease-1>", self.on_seekbar_release)
+        
+        # 총 시간 라벨
+        self.total_time_label = tk.Label(time_frame, text="00:00", font=("Arial", 8))
+        self.total_time_label.pack(side=tk.RIGHT)
+
+        # 상태바 (맨 아래)
+        status_frame = tk.Frame(root, relief=tk.SUNKEN, bd=1)
+        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        self.status_label = tk.Label(status_frame, text="총 0개의 MP3 파일", 
+                                   font=("Arial", 9), anchor=tk.W)
+        self.status_label.pack(side=tk.LEFT, padx=5, pady=2)
 
         # 테이블 프레임
         table_frame = tk.Frame(root)
@@ -135,8 +187,11 @@ class MP3EditorApp:
             self.file_list = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(".mp3")]
             if self.file_list:
                 self.load_all_files()
+                # 상태바 업데이트
+                self.update_status()
             else:
                 messagebox.showinfo("알림", "MP3 파일이 없습니다.")
+                self.status_label.config(text="총 0개의 MP3 파일")
 
     def load_all_files(self):
         # 기존 데이터 클리어
@@ -712,6 +767,135 @@ class MP3EditorApp:
             print(f"진행: {processed_count}/{total_selected} - {data['filename']}")
 
         messagebox.showinfo("완료", f"✅ 선택된 항목 장르 추천 완료!\n총 {processed_count}개 파일 처리됨")
+
+    def get_selected_item_path(self):
+        """선택된 항목의 파일 경로를 반환"""
+        selected_items = self.tree.selection()
+        if not selected_items:
+            return None
+        
+        # 첫 번째 선택된 항목의 인덱스 가져오기
+        item = selected_items[0]
+        index = self.tree.index(item)
+        
+        if 0 <= index < len(self.mp3_data):
+            return self.mp3_data[index]['path']
+        return None
+
+    def toggle_play_pause(self):
+        """재생/일시정지 토글"""
+        selected_path = self.get_selected_item_path()
+        
+        if not selected_path:
+            messagebox.showwarning("선택 필요", "재생할 MP3 파일을 선택해주세요.")
+            return
+        
+        try:
+            if not self.is_playing:
+                # 재생 시작
+                if self.current_playing_file != selected_path:
+                    # 새로운 파일 로드
+                    pygame.mixer.music.load(selected_path)
+                    self.current_playing_file = selected_path
+                    self.song_length = self.get_mp3_length(selected_path)
+                    self.current_pos = 0
+                    
+                    # UI 업데이트
+                    filename = os.path.basename(selected_path)
+                    self.current_file_label.config(text=f"재생 중: {filename}")
+                    self.total_time_label.config(text=self.format_time(self.song_length))
+                    self.seekbar.config(to=100)
+                    self.seekbar.set(0)
+                
+                pygame.mixer.music.play()
+                self.is_playing = True
+                self.btn_play_pause.config(text="⏸️")
+                
+                # 시크바 업데이트 시작
+                self.update_seekbar()
+                
+                # 재생 상태 모니터링을 위한 스레드 시작
+                threading.Thread(target=self.monitor_playback, daemon=True).start()
+                
+                print(f"재생 중: {os.path.basename(selected_path)}")
+                
+            else:
+                # 일시정지
+                pygame.mixer.music.pause()
+                self.is_playing = False
+                self.btn_play_pause.config(text="▶️")
+                
+        except Exception as e:
+            messagebox.showerror("재생 오류", f"파일을 재생할 수 없습니다:\n{str(e)}")
+
+    def monitor_playback(self):
+        """재생 상태를 모니터링하여 곡이 끝나면 버튼 상태 업데이트"""
+        while self.is_playing:
+            if not pygame.mixer.music.get_busy():
+                # 재생이 끝남
+                self.is_playing = False
+                self.btn_play_pause.config(text="▶️")
+                self.current_file_label.config(text="재생 완료")
+                self.seekbar.set(100)
+                self.current_time_label.config(text=self.format_time(self.song_length))
+                print("재생 완료")
+                break
+            threading.Event().wait(0.1)  # 0.1초마다 체크
+
+    def get_mp3_length(self, file_path):
+        """MP3 파일의 길이를 초 단위로 반환"""
+        try:
+            audio = eyed3.load(file_path)
+            if audio and audio.info:
+                return int(audio.info.time_secs)
+            return 0
+        except:
+            return 0
+
+    def format_time(self, seconds):
+        """초를 MM:SS 형식으로 변환"""
+        minutes = int(seconds // 60)
+        seconds = int(seconds % 60)
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def on_seekbar_change(self, value):
+        """시크바 값이 변경될 때 호출"""
+        if self.seeking and self.is_playing and self.song_length > 0:
+            # 시크바 위치에 따라 재생 위치 변경
+            new_pos = (float(value) / 100) * self.song_length
+            pygame.mixer.music.set_pos(new_pos)
+            self.current_pos = new_pos
+
+    def on_seekbar_press(self, event):
+        """시크바 누르기 이벤트"""
+        self.seeking = True
+
+    def on_seekbar_release(self, event):
+        """시크바 떼기 이벤트"""
+        self.seeking = False
+        self.on_seekbar_change(self.seekbar.get())
+
+    def update_seekbar(self):
+        """시크바와 시간 라벨 업데이트"""
+        if self.is_playing and not self.seeking and self.song_length > 0:
+            # pygame에서는 정확한 재생 위치를 가져오기 어려우므로 추정
+            self.current_pos += 0.1
+            if self.current_pos > self.song_length:
+                self.current_pos = self.song_length
+            
+            # 시크바 업데이트
+            progress = (self.current_pos / self.song_length) * 100
+            self.seekbar.set(progress)
+            
+            # 시간 라벨 업데이트
+            self.current_time_label.config(text=self.format_time(self.current_pos))
+        
+        # 0.1초마다 업데이트
+        if self.is_playing:
+            self.root.after(100, self.update_seekbar)
+
+    def update_status(self):
+        self.status_label.config(text=f"총 {len(self.file_list)}개의 MP3 파일")
 
 # 실행
 if __name__ == "__main__":
