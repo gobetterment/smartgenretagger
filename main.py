@@ -43,103 +43,60 @@ class MP3EditorApp:
         self.root = root
         self.root.title("SmartGenreTagger - AI 기반 MP3 장르 태그 편집기")
         self.root.geometry("1200x600")
-        self.root.configure(bg="#ffffff")
+
         self.file_list = []
         self.mp3_data = []
 
         # UI 구성
         # 상단 버튼 프레임
-        top_frame = tk.Frame(root, bg="#e8e8e8")
-        top_frame.pack(pady=15, padx=10, fill=tk.X)
-
-        # 버튼 스타일 설정
-        button_style = {
-            "font": ("SF Pro Display", 11, "normal"),
-            "relief": "flat",
-            "borderwidth": 0,
-            "padx": 20,
-            "pady": 8,
-            "cursor": "hand2"
-        }
+        top_frame = tk.Frame(root)
+        top_frame.pack(pady=10, padx=10, fill=tk.X)
 
         # 폴더 선택 버튼
         self.btn_select_folder = tk.Button(
             top_frame, 
             text="📁 폴더 선택", 
-            command=self.select_folder,
-            bg=top_frame.cget("bg"), 
-            fg="black",
-            activebackground=top_frame.cget("bg"),
-            activeforeground="black",
-            **button_style
+            command=self.select_folder
         )
-        self.btn_select_folder.pack(side=tk.LEFT, padx=8)
-
-        # 구분선
-        separator1 = tk.Frame(top_frame, width=1, height=30, bg="#999999")
-        separator1.pack(side=tk.LEFT, padx=10)
+        self.btn_select_folder.pack(side=tk.LEFT, padx=5)
                         
         # AI 추천 관련 버튼들
         self.btn_gpt_selected = tk.Button(
             top_frame, 
             text="🤖 선택 추천", 
-            command=self.get_selected_gpt_suggestions,
-            bg=top_frame.cget("bg"), 
-            fg="black",
-            activebackground=top_frame.cget("bg"),
-            activeforeground="black",
-            **button_style
+            command=self.get_selected_gpt_suggestions
         )
-        self.btn_gpt_selected.pack(side=tk.LEFT, padx=8)
+        self.btn_gpt_selected.pack(side=tk.LEFT, padx=5)
 
         self.btn_gpt_all = tk.Button(
             top_frame, 
             text="🤖 전체 추천", 
-            command=self.get_all_gpt_suggestions,
-            bg=top_frame.cget("bg"), 
-            fg="black",
-            activebackground=top_frame.cget("bg"),
-            activeforeground="black",
-            **button_style
+            command=self.get_all_gpt_suggestions
         )
-        self.btn_gpt_all.pack(side=tk.LEFT, padx=8)
-        
-        # 구분선
-        separator2 = tk.Frame(top_frame, width=1, height=30, bg="#999999")
-        separator2.pack(side=tk.LEFT, padx=10)
+        self.btn_gpt_all.pack(side=tk.LEFT, padx=5)
 
         # 저장 관련 버튼들
         self.btn_save_selected = tk.Button(
             top_frame, 
             text="💾 선택 저장", 
-            command=self.save_selected_items,
-            bg=top_frame.cget("bg"), 
-            fg="black",
-            activebackground=top_frame.cget("bg"),
-            activeforeground="black",
-            **button_style
+            command=self.save_selected_items
         )
-        self.btn_save_selected.pack(side=tk.LEFT, padx=8)
+        self.btn_save_selected.pack(side=tk.LEFT, padx=5)
 
         self.btn_save_all = tk.Button(
             top_frame, 
             text="💾 전체 저장", 
-            command=self.save_all_changes,
-            bg=top_frame.cget("bg"), 
-            fg="black",
-            activebackground=top_frame.cget("bg"),
-            activeforeground="black",
-            **button_style
+            command=self.save_all_changes
         )
-        self.btn_save_all.pack(side=tk.LEFT, padx=8)
+        self.btn_save_all.pack(side=tk.LEFT, padx=5)
 
        
 
         
 
         # 테이블 프레임
-        table_frame = tk.Frame(root, bg="#ffffff", relief="solid", borderwidth=1)
-        table_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(5, 15))
+        table_frame = tk.Frame(root)
+        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         # 트리뷰 (테이블) 생성 - 다중 선택 가능
         columns = ("Title", "Artist", "Year", "Genre", "Suggested Genre / Edit")
@@ -276,7 +233,7 @@ class MP3EditorApp:
             current_value = self.mp3_data[index]['year'].replace(" ✓", "") if self.mp3_data[index]['year'] else ""
             
             # Entry 위젯 생성
-            self.edit_entry = tk.Entry(self.tree, font=("Arial", 9), relief="solid", borderwidth=1)
+            self.edit_entry = tk.Entry(self.tree)
             self.edit_entry.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
             self.edit_entry.insert(0, current_value)
             self.edit_entry.select_range(0, tk.END)
@@ -308,7 +265,7 @@ class MP3EditorApp:
             current_value = self.mp3_data[index]['gpt_suggestion']
             
             # Entry 위젯 생성
-            self.edit_entry = tk.Entry(self.tree, font=("Arial", 9), relief="solid", borderwidth=1)
+            self.edit_entry = tk.Entry(self.tree)
             self.edit_entry.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
             self.edit_entry.insert(0, current_value)
             self.edit_entry.select_range(0, tk.END)
