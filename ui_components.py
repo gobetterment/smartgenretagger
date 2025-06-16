@@ -97,7 +97,7 @@ class EditableTreeWidget(QTreeWidget):
                 text = item.text(column)
                 if text:
                     self.copy_requested.emit(text, "장르")
-            elif column == 4:  # GPT 추천 컬럼
+            elif column == 4:  # 장르 추천 컬럼
                 self.gpt_edit_requested.emit(index, item, column)
     
     def _on_context_menu(self, position):
@@ -144,12 +144,12 @@ class ControlButtonsWidget(QWidget):
         self.btn_select_folder.clicked.connect(self.folder_select_requested.emit)
         layout.addWidget(self.btn_select_folder)
         
-        # AI 추천 관련 버튼들
-        self.btn_gpt_selected = QPushButton("🤖 선택 추천")
+        # 장르 추천 관련 버튼들
+        self.btn_gpt_selected = QPushButton("🎵 선택 추천")
         self.btn_gpt_selected.clicked.connect(self.gpt_selected_requested.emit)
         layout.addWidget(self.btn_gpt_selected)
         
-        self.btn_gpt_all = QPushButton("🤖 전체 추천")
+        self.btn_gpt_all = QPushButton("🎵 전체 추천")
         self.btn_gpt_all.clicked.connect(self.gpt_all_requested.emit)
         layout.addWidget(self.btn_gpt_all)
         
@@ -174,7 +174,7 @@ class ControlButtonsWidget(QWidget):
         layout.addStretch()
     
     def set_gpt_buttons_enabled(self, enabled):
-        """GPT 추천 버튼들 활성화/비활성화"""
+        """장르 추천 버튼들 활성화/비활성화"""
         self.btn_gpt_selected.setEnabled(enabled)
         self.btn_gpt_all.setEnabled(enabled)
         self.btn_gpt_stop.setEnabled(not enabled)  # 중지 버튼은 반대로

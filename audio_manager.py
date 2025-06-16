@@ -36,8 +36,8 @@ class AudioFileProcessor:
                 'year': year,
                 'original_year': original_year,
                 'year_added': False,
-                'genre': genre,
-                'gpt_suggestion': ""
+                            'genre': genre,
+            'genre_suggestion': ""
             }
             
         except Exception as e:
@@ -101,7 +101,7 @@ class AudioFileProcessor:
             'original_year': "",
             'year_added': False,
             'genre': "",
-            'gpt_suggestion': ""
+            'genre_suggestion': ""
         }
     
     @staticmethod
@@ -114,10 +114,10 @@ class AudioFileProcessor:
             if not audio.tag:
                 audio.initTag()
             
-            # GPT 추천이 있으면 장르에 적용
-            if data['gpt_suggestion']:
-                audio.tag.genre = data['gpt_suggestion']
-                data['genre'] = data['gpt_suggestion']
+            # 장르 추천이 있으면 장르에 적용
+            if data.get('genre_suggestion', ''):
+                audio.tag.genre = data['genre_suggestion']
+                data['genre'] = data['genre_suggestion']
             
             # 연도 정보 처리 (추가/수정/삭제)
             year_value = data['year'].replace(" ✓", "") if data['year'] else ""

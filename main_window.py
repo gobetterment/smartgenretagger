@@ -1,32 +1,12 @@
 import os
 from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox, 
-                               QFileDialog, QApplication, QLabel, QMenu, QProgressDialog,
-                               QSplitter, QTextEdit, QPushButton)
-from PySide6.QtCore import QTimer, Qt, QThread, Signal
+                               QFileDialog, QApplication, QLabel, QMenu, QProgressDialog)
+from PySide6.QtCore import QTimer, Qt
 
 from ui_components import (EditableTreeWidget, ControlButtonsWidget, 
                           AudioControlWidget, InlineEditor)
 from audio_manager import AudioFileProcessor, AudioPlayer
-from gpt_service import gpt_service
-
-
-class DetailedAnalysisThread(QThread):
-    """상세 분석을 위한 스레드"""
-    analysis_completed = Signal(str)
-    analysis_error = Signal(str)
-    
-    def __init__(self, title, artist, year=None):
-        super().__init__()
-        self.title = title
-        self.artist = artist
-        self.year = year
-    
-    def run(self):
-        try:
-            result = gpt_service.get_detailed_genre_analysis(self.title, self.artist, self.year)
-            self.analysis_completed.emit(result)
-        except Exception as e:
-            self.analysis_error.emit(str(e))
+from music_genre_service import music_genre_service
 
 
 class SmartGenreTaggerMainWindow(QMainWindow):
@@ -35,14 +15,14 @@ class SmartGenreTaggerMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SmartGenreTagger - AI 기반 MP3 장르 태그 편집기")
-        self.setGeometry(100, 100, 1400, 700)
+        self.setGeometry(100, 100, 1200, 600)
         
         # 데이터 저장
         self.file_list = []
         self.mp3_data = []
         
-        # GPT 추천 중지 플래그
-        self.gpt_stop_requested = False
+        # 장르 추천 중지 플래그
+        self.genre_stop_requested = False
         
         # 오디오 플레이어
         self.audio_player = AudioPlayer()
@@ -55,13 +35,6 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         
         # 편집 관련
         self.inline_editor = None
-        
-        # 상세 정보 패널
-        self.detail_panel = None
-        self.detail_text = None
-        self.analyze_button = None
-        self.current_analysis_thread = None
-        self.current_selected_data = None
         
         # UI 구성
         self.setup_ui()
@@ -81,33 +54,21 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         # 상단 컨트롤 버튼들
         self.control_buttons = ControlButtonsWidget()
         self.control_buttons.folder_select_requested.connect(self.select_folder)
-        self.control_buttons.gpt_selected_requested.connect(self.get_selected_gpt_suggestions)
-        self.control_buttons.gpt_all_requested.connect(self.get_all_gpt_suggestions)
-        self.control_buttons.gpt_stop_requested.connect(self.stop_gpt_recommendations)
-        self.control_buttons.gpt_clear_requested.connect(self.clear_gpt_recommendations)
+        self.control_buttons.gpt_selected_requested.connect(self.get_selected_genre_suggestions)
+        self.control_buttons.gpt_all_requested.connect(self.get_all_genre_suggestions)
+        self.control_buttons.gpt_stop_requested.connect(self.stop_genre_recommendations)
+        self.control_buttons.gpt_clear_requested.connect(self.clear_genre_recommendations)
         self.control_buttons.save_selected_requested.connect(self.save_selected_items)
         self.control_buttons.save_all_requested.connect(self.save_all_changes)
         main_layout.addWidget(self.control_buttons)
         
-        # 메인 컨텐츠 영역 (스플리터 사용)
-        main_splitter = QSplitter(Qt.Horizontal)
-        
-        # 왼쪽: 트리 위젯
+        # 트리 위젯
         self.tree = EditableTreeWidget()
         self.tree.year_edit_requested.connect(self.edit_year)
-        self.tree.gpt_edit_requested.connect(self.edit_gpt_suggestion)
+        self.tree.gpt_edit_requested.connect(self.edit_genre_suggestion)
         self.tree.copy_requested.connect(self.copy_to_clipboard)
         self.tree.context_menu_requested.connect(self.show_copy_context_menu)
-        self.tree.itemSelectionChanged.connect(self.on_selection_changed)
-        main_splitter.addWidget(self.tree)
-        
-        # 오른쪽: 상세 정보 패널
-        self.setup_detail_panel()
-        main_splitter.addWidget(self.detail_panel)
-        
-        # 스플리터 비율 설정 (왼쪽 65%, 오른쪽 35%)
-        main_splitter.setSizes([910, 490])
-        main_layout.addWidget(main_splitter)
+        main_layout.addWidget(self.tree)
         
         # 인라인 편집기 설정
         self.inline_editor = InlineEditor(self.tree)
@@ -123,66 +84,6 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         # 상태바
         self.status_label = QLabel("총 0개의 MP3 파일")
         main_layout.addWidget(self.status_label)
-    
-    def setup_detail_panel(self):
-        """상세 정보 패널 설정"""
-        self.detail_panel = QWidget()
-        detail_layout = QVBoxLayout(self.detail_panel)
-        
-        # 제목
-        title_label = QLabel("🎵 곡 상세 정보")
-        title_label.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
-        detail_layout.addWidget(title_label)
-        
-        # 분석 버튼
-        self.analyze_button = QPushButton("🔍 스마트 분석")
-        self.analyze_button.setEnabled(False)
-        self.analyze_button.clicked.connect(self.analyze_selected_song)
-        self.analyze_button.setStyleSheet("""
-            QPushButton {
-                background-color: #007acc;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 20px;
-                font-size: 14px;
-                font-weight: bold;
-                margin-bottom: 10px;
-            }
-            QPushButton:hover {
-                background-color: #005a9e;
-            }
-            QPushButton:pressed {
-                background-color: #004578;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-                color: #666666;
-            }
-        """)
-        detail_layout.addWidget(self.analyze_button)
-        
-        # 상세 정보 텍스트
-        self.detail_text = QTextEdit()
-        self.detail_text.setReadOnly(True)
-        self.detail_text.setPlaceholderText("곡을 선택하고 '🔍 스마트 분석' 버튼을 클릭하세요.")
-        self.detail_text.setStyleSheet("""
-            QTextEdit {
-                border: 1px solid #ddd;
-                border-radius: 8px;
-                padding: 15px;
-                font-family: 'SF Pro Display', 'Segoe UI', 'Malgun Gothic', sans-serif;
-                font-size: 13px;
-                line-height: 1.6;
-                background-color: #fafafa;
-                color: #333;
-            }
-            QTextEdit:focus {
-                border: 2px solid #007acc;
-                background-color: #ffffff;
-            }
-        """)
-        detail_layout.addWidget(self.detail_text)
     
     def select_folder(self):
         """폴더 선택"""
@@ -292,21 +193,21 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         edit_widget.returnPressed.connect(lambda: self.finish_year_edit(data_index, item))
         edit_widget.editingFinished.connect(lambda: self.finish_year_edit(data_index, item))
     
-    def edit_gpt_suggestion(self, index, item, column):
-        """GPT 추천 편집"""
+    def edit_genre_suggestion(self, index, item, column):
+        """장르 추천 편집"""
         # 정렬된 상태에서도 올바른 데이터 인덱스 사용
         data_index = self.get_data_index_from_item(item)
         if data_index is None:
             data_index = index  # 폴백
         
-        current_value = self.mp3_data[data_index]['gpt_suggestion']
+        current_value = self.mp3_data[data_index]['genre_suggestion']
         
         # 편집 시작
         edit_widget = self.inline_editor.start_edit(data_index, item, column, current_value)
         
         # 이벤트 연결
-        edit_widget.returnPressed.connect(lambda: self.finish_gpt_edit(data_index, item))
-        edit_widget.editingFinished.connect(lambda: self.finish_gpt_edit(data_index, item))
+        edit_widget.returnPressed.connect(lambda: self.finish_genre_edit(data_index, item))
+        edit_widget.editingFinished.connect(lambda: self.finish_genre_edit(data_index, item))
     
     def finish_year_edit(self, data_index, item):
         """연도 편집 완료"""
@@ -353,8 +254,8 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         except Exception as e:
             print(f"Error in finish_year_edit: {e}")
     
-    def finish_gpt_edit(self, data_index, item):
-        """GPT 추천 편집 완료"""
+    def finish_genre_edit(self, data_index, item):
+        """장르 추천 편집 완료"""
         if not self.inline_editor.edit_widget:
             return
         
@@ -365,22 +266,22 @@ class SmartGenreTaggerMainWindow(QMainWindow):
             self.inline_editor.finish_current_edit()
             
             # 데이터 업데이트
-            self.mp3_data[data_index]['gpt_suggestion'] = new_value
+            self.mp3_data[data_index]['genre_suggestion'] = new_value
             
             # 트리 아이템 업데이트
             item.setText(4, new_value)
             
         except Exception as e:
-            print(f"Error in finish_gpt_edit: {e}")
+            print(f"Error in finish_genre_edit: {e}")
     
-    def get_all_gpt_suggestions(self):
-        """모든 파일에 대해 GPT 장르 추천"""
+    def get_all_genre_suggestions(self):
+        """모든 파일에 대해 장르 추천"""
         if not self.mp3_data:
             QMessageBox.information(self, "알림", "먼저 MP3 파일을 로드해주세요.")
             return
         
         # 중지 플래그 초기화 및 버튼 상태 변경
-        self.gpt_stop_requested = False
+        self.genre_stop_requested = False
         self.control_buttons.set_gpt_buttons_enabled(False)
         
         total_files = len(self.mp3_data)
@@ -389,17 +290,22 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         try:
             for i, data in enumerate(self.mp3_data):
                 # 중지 요청 확인
-                if self.gpt_stop_requested:
-                    print("GPT 추천이 사용자에 의해 중지되었습니다.")
+                if self.genre_stop_requested:
+                    print("장르 추천이 사용자에 의해 중지되었습니다.")
                     break
                 
                 try:
                     # 상태 업데이트
-                    self.status_label.setText(f"GPT 추천 진행 중... ({i+1}/{total_files})")
+                    self.status_label.setText(f"🎵 장르 검색 중... ({i+1}/{total_files})")
                     
-                    # GPT 추천 받기
-                    suggestion = gpt_service.get_genre_recommendation(data['title'], data['artist'])
-                    data['gpt_suggestion'] = suggestion
+                    # 장르 추천 받기
+                    suggestion = music_genre_service.get_genre_recommendation(
+                        data['title'],
+                        data['artist'],
+                        year=data.get('year', None),   # 연도 정보 추가
+                        original_genre=data['genre']
+                    )
+                    data['genre_suggestion'] = suggestion
                     
                     # 정렬된 상태에서 올바른 트리 아이템 찾기
                     item = self.find_tree_item_by_data_index(i)
@@ -411,30 +317,30 @@ class SmartGenreTaggerMainWindow(QMainWindow):
                     # UI 업데이트
                     QApplication.processEvents()
                     
-                    print(f"GPT 추천 완료 ({i+1}/{total_files}): {data['filename']} -> {suggestion}")
+                    print(f"장르 추천 완료 ({i+1}/{total_files}): {data['filename']} -> {suggestion}")
                     
                 except Exception as e:
-                    print(f"GPT 추천 오류 {data['filename']}: {e}")
+                    print(f"장르 추천 오류 {data['filename']}: {e}")
         
         finally:
             # 버튼 상태 복원 및 상태 업데이트
             self.control_buttons.set_gpt_buttons_enabled(True)
             self.update_status()
             
-            if self.gpt_stop_requested:
-                QMessageBox.information(self, "중지됨", f"GPT 추천이 중지되었습니다.\n완료된 파일: {completed_count}개")
+            if self.genre_stop_requested:
+                QMessageBox.information(self, "중지됨", f"장르 추천이 중지되었습니다.\n완료된 파일: {completed_count}개")
             else:
                 QMessageBox.information(self, "완료", f"총 {completed_count}개 파일의 장르 추천이 완료되었습니다.")
     
-    def get_selected_gpt_suggestions(self):
-        """선택된 파일들에 대해 GPT 장르 추천"""
+    def get_selected_genre_suggestions(self):
+        """선택된 파일들에 대해 장르 추천"""
         selected_items = self.tree.selectedItems()
         if not selected_items:
             QMessageBox.information(self, "알림", "추천받을 항목을 선택해주세요.")
             return
         
         # 중지 플래그 초기화 및 버튼 상태 변경
-        self.gpt_stop_requested = False
+        self.genre_stop_requested = False
         self.control_buttons.set_gpt_buttons_enabled(False)
         
         total_selected = len(selected_items)
@@ -443,8 +349,8 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         try:
             for i, item in enumerate(selected_items):
                 # 중지 요청 확인
-                if self.gpt_stop_requested:
-                    print("GPT 추천이 사용자에 의해 중지되었습니다.")
+                if self.genre_stop_requested:
+                    print("장르 추천이 사용자에 의해 중지되었습니다.")
                     break
                 
                 # 정렬된 상태에서도 올바른 데이터 인덱스 사용
@@ -454,11 +360,16 @@ class SmartGenreTaggerMainWindow(QMainWindow):
                     
                     try:
                         # 상태 업데이트
-                        self.status_label.setText(f"선택 항목 GPT 추천 진행 중... ({i+1}/{total_selected})")
+                        self.status_label.setText(f"🎵 선택 항목 장르 검색 중... ({i+1}/{total_selected})")
                         
-                        # GPT 추천 받기
-                        suggestion = gpt_service.get_genre_recommendation(data['title'], data['artist'])
-                        data['gpt_suggestion'] = suggestion
+                        # 장르 추천 받기
+                        suggestion = music_genre_service.get_genre_recommendation(
+                                data['title'],
+                                data['artist'],
+                                year=data.get('year', None),   # ← 연도 정보 추가
+                                original_genre=data['genre']
+                        )
+                        data['genre_suggestion'] = suggestion
                         
                         # 트리 아이템 업데이트
                         item.setText(4, suggestion)
@@ -468,18 +379,18 @@ class SmartGenreTaggerMainWindow(QMainWindow):
                         # UI 업데이트
                         QApplication.processEvents()
                         
-                        print(f"GPT 추천 완료 ({i+1}/{total_selected}): {data['filename']} -> {suggestion}")
+                        print(f"장르 추천 완료 ({i+1}/{total_selected}): {data['filename']} -> {suggestion}")
                         
                     except Exception as e:
-                        print(f"GPT 추천 오류 {data['filename']}: {e}")
+                        print(f"장르 추천 오류 {data['filename']}: {e}")
         
         finally:
             # 버튼 상태 복원 및 상태 업데이트
             self.control_buttons.set_gpt_buttons_enabled(True)
             self.update_status()
             
-            if self.gpt_stop_requested:
-                QMessageBox.information(self, "중지됨", f"선택 항목 GPT 추천이 중지되었습니다.\n완료된 파일: {completed_count}개")
+            if self.genre_stop_requested:
+                QMessageBox.information(self, "중지됨", f"선택 항목 장르 추천이 중지되었습니다.\n완료된 파일: {completed_count}개")
             else:
                 QMessageBox.information(self, "완료", f"선택된 {completed_count}개 파일의 장르 추천이 완료되었습니다.")
     
@@ -489,11 +400,11 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         error_count = 0
         
         for i, data in enumerate(self.mp3_data):
-            # GPT 추천이 있거나 연도가 변경된 경우만 저장
-            has_gpt_suggestion = bool(data['gpt_suggestion'])
+            # 장르 추천이 있거나 연도가 변경된 경우만 저장
+            has_genre_suggestion = bool(data.get('genre_suggestion', ''))
             year_changed = data.get('year_added', False) or (data['year'].replace(" ✓", "") != data['original_year'])
             
-            if has_gpt_suggestion or year_changed:
+            if has_genre_suggestion or year_changed:
                 if AudioFileProcessor.save_metadata(data):
                     saved_count += 1
                     # 정렬된 상태에서 올바른 트리 아이템 찾기
@@ -528,11 +439,11 @@ class SmartGenreTaggerMainWindow(QMainWindow):
             if data_index is not None:
                 data = self.mp3_data[data_index]
                 
-                # GPT 추천이 있거나 연도가 변경된 경우만 저장
-                has_gpt_suggestion = bool(data['gpt_suggestion'])
+                # 장르 추천이 있거나 연도가 변경된 경우만 저장
+                has_genre_suggestion = bool(data.get('genre_suggestion', ''))
                 year_changed = data.get('year_added', False) or (data['year'].replace(" ✓", "") != data['original_year'])
                 
-                if has_gpt_suggestion or year_changed:
+                if has_genre_suggestion or year_changed:
                     if AudioFileProcessor.save_metadata(data):
                         saved_count += 1
                         # 트리 아이템 업데이트
@@ -661,131 +572,42 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         # 메뉴 표시
         menu.exec_(position)
     
-    def stop_gpt_recommendations(self):
-        """GPT 추천 중지"""
-        self.gpt_stop_requested = True
-        print("GPT 추천 중지 요청됨")
+    def stop_genre_recommendations(self):
+        """장르 추천 중지"""
+        self.genre_stop_requested = True
+        print("장르 추천 중지 요청됨")
     
-    def clear_gpt_recommendations(self):
-        """GPT 추천 정보 초기화"""
+    def clear_genre_recommendations(self):
+        """장르 추천 정보 초기화"""
         if not self.mp3_data:
             QMessageBox.information(self, "알림", "로드된 파일이 없습니다.")
             return
         
         # 확인 대화상자
         reply = QMessageBox.question(self, "확인", 
-                                   "모든 GPT 추천 정보를 초기화하시겠습니까?\n이 작업은 되돌릴 수 없습니다.",
+                                   "모든 장르 추천 정보를 초기화하시겠습니까?\n이 작업은 되돌릴 수 없습니다.",
                                    QMessageBox.Yes | QMessageBox.No,
                                    QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            # 데이터에서 GPT 추천 정보 제거
+            # 데이터에서 장르 추천 정보 제거
             cleared_count = 0
             for data in self.mp3_data:
-                if data['gpt_suggestion']:
-                    data['gpt_suggestion'] = ""
+                if data.get('genre_suggestion', ''):
+                    data['genre_suggestion'] = ""
                     cleared_count += 1
             
-            # 트리에서 GPT 추천 컬럼 초기화
+            # 트리에서 장르 추천 컬럼 초기화
             for i in range(self.tree.topLevelItemCount()):
                 item = self.tree.topLevelItem(i)
-                item.setText(4, "")  # GPT 추천 컬럼 비우기
+                item.setText(4, "")  # 장르 추천 컬럼 비우기
             
-            QMessageBox.information(self, "완료", f"{cleared_count}개의 GPT 추천 정보가 초기화되었습니다.")
-            print(f"GPT 추천 정보 초기화 완료: {cleared_count}개")
+            QMessageBox.information(self, "완료", f"{cleared_count}개의 장르 추천 정보가 초기화되었습니다.")
+            print(f"장르 추천 정보 초기화 완료: {cleared_count}개")
     
     def update_status(self):
         """상태바 업데이트"""
         file_count = len(self.mp3_data)
         self.status_label.setText(f"총 {file_count}개의 MP3 파일")
-    
-    def on_selection_changed(self):
-        """선택 항목 변경 시 호출"""
-        selected_items = self.tree.selectedItems()
-        if selected_items:
-            item = selected_items[0]
-            data_index = self.get_data_index_from_item(item)
-            if data_index is not None and data_index < len(self.mp3_data):
-                # 분석 버튼 활성화
-                self.analyze_button.setEnabled(True)
-                
-                # 현재 선택된 데이터 저장
-                self.current_selected_data = self.mp3_data[data_index]
-                
-                # 기본 정보 표시
-                data = self.mp3_data[data_index]
-                basic_info = f"""선택된 곡: {data['title']}
-아티스트: {data['artist']}
-연도: {data['year'] if data['year'] else '정보 없음'}
-현재 장르: {data['genre'] if data['genre'] else '정보 없음'}
-
-"""
-                self.detail_text.setText(basic_info)
-        else:
-            # 선택 해제 시
-            self.analyze_button.setEnabled(False)
-            self.current_selected_data = None
-            self.detail_text.clear()
-            self.detail_text.setPlaceholderText("곡을 선택하고 '🔍 스마트 분석' 버튼을 클릭하세요.")
-    
-    def analyze_selected_song(self):
-        """선택된 곡 상세 분석"""
-        selected_items = self.tree.selectedItems()
-        if not selected_items:
-            return
-        
-        item = selected_items[0]
-        data_index = self.get_data_index_from_item(item)
-        if data_index is None or data_index >= len(self.mp3_data):
-            return
-        
-        data = self.mp3_data[data_index]
-        title = data['title']
-        artist = data['artist']
-        year_str = data.get('year', '').replace(' ✓', '').strip()
-        year = None
-        
-        # 연도 정보 파싱
-        if year_str and year_str.isdigit():
-            year = int(year_str)
-        
-        if not title or not artist:
-            QMessageBox.warning(self, "경고", "제목과 아티스트 정보가 필요합니다.")
-            return
-        
-        # 분석 중 상태로 변경
-        self.analyze_button.setEnabled(False)
-        self.analyze_button.setText("🔄 분석 중...")
-        
-        # 분석 방식 미리보기 (항상 Google Search + GPT-3.5 사용)
-        self.detail_text.setText("🤖 분석 중...\n잠시만 기다려주세요.")
-        
-        # 분석 스레드 시작
-        self.current_analysis_thread = DetailedAnalysisThread(title, artist, year)
-        self.current_analysis_thread.analysis_completed.connect(self.on_analysis_completed)
-        self.current_analysis_thread.analysis_error.connect(self.on_analysis_error)
-        self.current_analysis_thread.start()
-    
-    def on_analysis_completed(self, result):
-        """분석 완료 시 호출"""
-        self.detail_text.setText(result)
-        self.analyze_button.setEnabled(True)
-        self.analyze_button.setText("🔍 스마트 분석")
-        
-        # 스레드 정리
-        if self.current_analysis_thread:
-            self.current_analysis_thread.deleteLater()
-            self.current_analysis_thread = None
-    
-    def on_analysis_error(self, error_msg):
-        """분석 오류 시 호출"""
-        self.detail_text.setText(f"분석 중 오류가 발생했습니다:\n{error_msg}")
-        self.analyze_button.setEnabled(True)
-        self.analyze_button.setText("🔍 스마트 분석")
-        
-        # 스레드 정리
-        if self.current_analysis_thread:
-            self.current_analysis_thread.deleteLater()
-            self.current_analysis_thread = None
     
  
