@@ -12,9 +12,11 @@ MP3 파일의 장르 태그를 GPT AI의 도움으로 자동 추천받고 편집
 
 ### 🤖 **AI 장르 추천**
 
-- **GPT 3.5-turbo** 기반 지능형 장르 추천
+- **스마트 분석**: Google Search API + GPT-3.5로 최신 음악 정보 분석
+- **비용 최적화**: 캐시 시스템과 스마트 모델 선택으로 API 비용 절약
 - **선택 추천**: 선택한 파일들만 장르 추천
 - **전체 추천**: 모든 파일 일괄 장르 추천
+- **웹 검색**: 브라우저에서 직접 음악 정보 검색
 - **국가명 제한**: 음악적으로 의미있는 지역 표기만 허용
 
 ### ✏️ **직접 편집**
@@ -73,13 +75,29 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-`.env` 파일을 열어서 OpenAI API 키를 입력하세요:
+`.env` 파일을 열어서 API 키들을 입력하세요:
 
 ```
+# OpenAI API 키 (필수)
 OPENAI_API_KEY=your_actual_api_key_here
+
+# Google Search API 설정 (선택사항 - 웹 검색 기능용)
+GOOGLE_API_KEY=your_google_api_key_here
+GOOGLE_SEARCH_ENGINE_ID=your_search_engine_id_here
 ```
 
-OpenAI API 키는 [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)에서 발급받을 수 있습니다.
+- **OpenAI API 키**: [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)에서 발급
+- **Google Search API**: 웹 검색 기능을 원하는 경우 설정 (선택사항)
+
+### 5. Google Search API 설정 (선택사항)
+
+웹 검색 기능을 사용하려면 Google Custom Search API를 설정하세요:
+
+```bash
+python setup_google_search.py
+```
+
+이 스크립트가 단계별로 설정을 안내해드립니다.
 
 ## 사용 방법
 
@@ -93,6 +111,8 @@ python main.py
 
 1. **📁 폴더 선택**: "폴더 선택" 버튼을 클릭하여 MP3 파일들이 있는 폴더 선택
 2. **🤖 장르 추천**:
+   - "🔍 스마트 분석": Google Search + GPT-3.5로 최신 정보 분석
+   - "🌐 구글 검색": 브라우저에서 직접 음악 정보 검색
    - "🤖 전체 추천": 모든 파일의 장르를 한 번에 추천
    - "🤖 선택 추천": 선택한 파일들만 장르 추천
 3. **✏️ 편집**:
@@ -154,10 +174,11 @@ GPT는 다음 규칙에 따라 장르를 추천합니다:
 ## 의존성
 
 ```txt
-eyed3>=0.9.6          # MP3 태그 편집
-openai>=1.0.0         # OpenAI API 클라이언트
-python-dotenv>=1.0.0  # 환경변수 관리
-pygame>=2.5.0         # 오디오 재생
+eyed3>=0.9.6                      # MP3 태그 편집
+openai>=1.0.0                     # OpenAI API 클라이언트
+python-dotenv>=1.0.0              # 환경변수 관리
+pygame>=2.5.0                     # 오디오 재생
+google-api-python-client>=2.149.0 # Google Search API (선택사항)
 ```
 
 ## 문제 해결
