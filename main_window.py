@@ -2,7 +2,8 @@ import os
 from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QMessageBox, 
                                QFileDialog, QApplication, QLabel, QMenu, QProgressDialog,
                                QSplitter, QTextEdit, QPushButton)
-from PySide6.QtCore import QTimer, Qt, QThread, Signal
+from PySide6.QtCore import QTimer, Qt, QThread, Signal, QUrl
+from PySide6.QtGui import QDesktopServices
 
 from ui_components import (EditableTreeWidget, ControlButtonsWidget, 
                           AudioControlWidget, InlineEditor)
@@ -15,14 +16,15 @@ class DetailedAnalysisThread(QThread):
     analysis_completed = Signal(str)
     analysis_error = Signal(str)
     
-    def __init__(self, title, artist):
+    def __init__(self, title, artist, year=None):
         super().__init__()
         self.title = title
         self.artist = artist
+        self.year = year
     
     def run(self):
         try:
-            result = gpt_service.get_detailed_genre_analysis(self.title, self.artist)
+            result = gpt_service.get_detailed_genre_analysis(self.title, self.artist, self.year)
             self.analysis_completed.emit(result)
         except Exception as e:
             self.analysis_error.emit(str(e))
@@ -59,7 +61,9 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         self.detail_panel = None
         self.detail_text = None
         self.analyze_button = None
+        self.google_search_button = None
         self.current_analysis_thread = None
+        self.current_selected_data = None
         
         # UI 구성
         self.setup_ui()
@@ -132,11 +136,22 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         title_label.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
         detail_layout.addWidget(title_label)
         
+        # 버튼들을 위한 수평 레이아웃
+        button_layout = QHBoxLayout()
+        
         # 분석 버튼
-        self.analyze_button = QPushButton("🔍 장르 상세 분석")
+        self.analyze_button = QPushButton("🔍 스마트 분석")
         self.analyze_button.setEnabled(False)
         self.analyze_button.clicked.connect(self.analyze_selected_song)
-        detail_layout.addWidget(self.analyze_button)
+        button_layout.addWidget(self.analyze_button)
+        
+        # 구글 검색 버튼
+        self.google_search_button = QPushButton("🌐 구글 검색")
+        self.google_search_button.setEnabled(False)
+        self.google_search_button.clicked.connect(self.open_google_search)
+        button_layout.addWidget(self.google_search_button)
+        
+        detail_layout.addLayout(button_layout)
         
         # 상세 정보 텍스트
         self.detail_text = QTextEdit()
@@ -676,8 +691,12 @@ class SmartGenreTaggerMainWindow(QMainWindow):
             item = selected_items[0]
             data_index = self.get_data_index_from_item(item)
             if data_index is not None and data_index < len(self.mp3_data):
-                # 분석 버튼 활성화
+                # 버튼들 활성화
                 self.analyze_button.setEnabled(True)
+                self.google_search_button.setEnabled(True)
+                
+                # 현재 선택된 데이터 저장
+                self.current_selected_data = self.mp3_data[data_index]
                 
                 # 기본 정보 표시
                 data = self.mp3_data[data_index]
@@ -686,13 +705,18 @@ class SmartGenreTaggerMainWindow(QMainWindow):
 연도: {data['year'] if data['year'] else '정보 없음'}
 현재 장르: {data['genre'] if data['genre'] else '정보 없음'}
 
-상세 분석을 원하시면 '장르 상세 분석' 버튼을 클릭하세요."""
+🔍 스마트 분석: 2022년 이후 곡은 GPT-4o(웹검색), 이전 곡은 GPT-3.5 사용
+🌐 구글 검색: 브라우저에서 직접 검색 결과를 확인합니다
+
+💡 비용 절약: 캐시된 결과 재사용, 연도별 모델 자동 선택"""
                 self.detail_text.setText(basic_info)
         else:
             # 선택 해제 시
             self.analyze_button.setEnabled(False)
+            self.google_search_button.setEnabled(False)
+            self.current_selected_data = None
             self.detail_text.clear()
-            self.detail_text.setPlaceholderText("곡을 선택하고 '장르 상세 분석' 버튼을 클릭하세요.")
+            self.detail_text.setPlaceholderText("곡을 선택하고 원하는 기능을 사용하세요.")
     
     def analyze_selected_song(self):
         """선택된 곡 상세 분석"""
@@ -708,6 +732,12 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         data = self.mp3_data[data_index]
         title = data['title']
         artist = data['artist']
+        year_str = data.get('year', '').replace(' ✓', '').strip()
+        year = None
+        
+        # 연도 정보 파싱
+        if year_str and year_str.isdigit():
+            year = int(year_str)
         
         if not title or not artist:
             QMessageBox.warning(self, "경고", "제목과 아티스트 정보가 필요합니다.")
@@ -716,10 +746,17 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         # 분석 중 상태로 변경
         self.analyze_button.setEnabled(False)
         self.analyze_button.setText("🔄 분석 중...")
-        self.detail_text.setText("GPT가 곡 정보를 분석하고 있습니다...\n잠시만 기다려주세요.")
+        
+        # 모델 선택 미리보기
+        if year and year >= 2022:
+            model_preview = "GPT-4o (웹 검색)"
+        else:
+            model_preview = "GPT-3.5 (기존 지식)"
+        
+        self.detail_text.setText(f"🤖 {model_preview}로 분석 중...\n잠시만 기다려주세요.")
         
         # 분석 스레드 시작
-        self.current_analysis_thread = DetailedAnalysisThread(title, artist)
+        self.current_analysis_thread = DetailedAnalysisThread(title, artist, year)
         self.current_analysis_thread.analysis_completed.connect(self.on_analysis_completed)
         self.current_analysis_thread.analysis_error.connect(self.on_analysis_error)
         self.current_analysis_thread.start()
@@ -728,7 +765,7 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         """분석 완료 시 호출"""
         self.detail_text.setText(result)
         self.analyze_button.setEnabled(True)
-        self.analyze_button.setText("🔍 장르 상세 분석")
+        self.analyze_button.setText("🔍 스마트 분석")
         
         # 스레드 정리
         if self.current_analysis_thread:
@@ -739,9 +776,47 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         """분석 오류 시 호출"""
         self.detail_text.setText(f"분석 중 오류가 발생했습니다:\n{error_msg}")
         self.analyze_button.setEnabled(True)
-        self.analyze_button.setText("🔍 장르 상세 분석")
+        self.analyze_button.setText("🔍 스마트 분석")
         
         # 스레드 정리
         if self.current_analysis_thread:
             self.current_analysis_thread.deleteLater()
-            self.current_analysis_thread = None 
+            self.current_analysis_thread = None
+    
+    def open_google_search(self):
+        """구글 검색 열기"""
+        if not self.current_selected_data:
+            return
+        
+        title = self.current_selected_data['title']
+        artist = self.current_selected_data['artist']
+        
+        if not title or not artist:
+            QMessageBox.warning(self, "경고", "제목과 아티스트 정보가 필요합니다.")
+            return
+        
+        # 구글 검색 쿼리 생성
+        search_query = f"{artist} - {title}"
+        search_url = f"https://www.google.com/search?q={search_query.replace(' ', '+')}"
+        
+        # 상세 정보 패널에 검색 정보 표시
+        search_info = f"""🌐 구글 검색이 열렸습니다!
+
+검색어: {artist} - {title} genre music information
+
+브라우저에서 다음과 같은 사이트들을 확인해보세요:
+• AllMusic - 전문적인 음악 정보
+• Discogs - 음반 정보 및 장르 분류
+• Wikipedia - 아티스트 및 앨범 정보
+• Last.fm - 사용자 태그 및 장르 정보
+• MusicBrainz - 음악 메타데이터
+
+💡 팁: 여러 사이트의 정보를 종합해서 판단하세요!"""
+        
+        self.detail_text.setText(search_info)
+        
+        try:
+            # 기본 브라우저에서 구글 검색 열기
+            QDesktopServices.openUrl(QUrl(search_url))
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"브라우저 열기 실패:\n{str(e)}") 
