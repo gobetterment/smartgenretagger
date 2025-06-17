@@ -188,6 +188,7 @@ class AudioControlWidget(QWidget):
     seek_position_changed = Signal(int)
     seek_started = Signal()
     seek_finished = Signal()
+    copy_filename_requested = Signal()  # 파일명 복사 시그널 추가
     
     def __init__(self):
         super().__init__()
@@ -210,6 +211,12 @@ class AudioControlWidget(QWidget):
         self.btn_play_pause.setFixedWidth(40)
         self.btn_play_pause.clicked.connect(self.play_pause_requested.emit)
         time_layout.addWidget(self.btn_play_pause)
+        
+        # 파일명 복사 버튼 추가
+        self.btn_copy_filename = QPushButton("📋 파일명 복사")
+        self.btn_copy_filename.setFixedWidth(110)
+        self.btn_copy_filename.clicked.connect(self.copy_filename_requested.emit)
+        time_layout.addWidget(self.btn_copy_filename)
         
         # 현재 시간 라벨
         self.current_time_label = QLabel("00:00")

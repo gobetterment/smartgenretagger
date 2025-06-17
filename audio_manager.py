@@ -3,31 +3,30 @@ import eyed3
 import pygame
 import threading
 from typing import List, Dict, Optional
+from mutagen.id3 import ID3, ID3NoHeaderError, Encoding, TYER
+from mutagen.mp3 import MP3
 
 class AudioFileProcessor:
     """MP3 파일 처리 클래스"""
     
     @staticmethod
     def extract_metadata(file_path: str) -> Dict:
-        """MP3 파일에서 메타데이터 추출"""
+        """MP3 파일에서 메타데이터 추출 (상세 로그 추가)"""
         try:
+            print(f"extract_metadata: 파일 로드 시도 - {file_path}")
             audio = eyed3.load(file_path)
             if not audio or not audio.tag:
+                print(f"extract_metadata: 태그 없음 - {file_path}")
                 return AudioFileProcessor._create_empty_metadata(file_path)
-            
             title = audio.tag.title or os.path.basename(file_path)
             artist = audio.tag.artist or "Unknown Artist"
             genre = audio.tag.genre.name if audio.tag.genre else ""
-            
-            # 연도 정보 가져오기 (다양한 ID3 태그 필드 확인)
             year, original_year = AudioFileProcessor._extract_year_info(audio.tag)
-            
-            # 디버그 출력
             if year:
-                print(f"Debug: 연도 발견 - 파일: {os.path.basename(file_path)}, 연도: {year}")
+                print(f"extract_metadata: 연도 발견 - 파일: {os.path.basename(file_path)}, 연도: {year}")
             else:
-                print(f"Debug: 연도 없음 - 파일: {os.path.basename(file_path)}")
-            
+                print(f"extract_metadata: 연도 없음 - 파일: {os.path.basename(file_path)}")
+            print(f"extract_metadata: 메타데이터 추출 성공 - {file_path}")
             return {
                 'path': file_path,
                 'filename': os.path.basename(file_path),
@@ -36,13 +35,12 @@ class AudioFileProcessor:
                 'year': year,
                 'original_year': original_year,
                 'year_added': False,
-                            'genre': genre,
-            'genre_suggestion': ""
+                'genre': genre,
+                'genre_suggestion': ""
             }
-            
         except Exception as e:
-            print(f"파일 로드 오류 {file_path}: {e}")
-            return AudioFileProcessor._create_empty_metadata(file_path)
+            print(f"extract_metadata: 파일 로드 오류 {file_path}: {e}")
+            return None
     
     @staticmethod
     def _extract_year_info(tag) -> tuple:
@@ -105,40 +103,66 @@ class AudioFileProcessor:
         }
     
     @staticmethod
-    def save_metadata(data: Dict) -> bool:
-        """메타데이터를 MP3 파일에 저장"""
-        path = data['path']
-        
+    def upgrade_id3_to_v23_utf16(file_path: str):
+        """ID3 태그를 v2.3(UTF-16)으로 강제 변환 (latin-1 오류 방지)"""
         try:
+            audio = MP3(file_path)
+            try:
+                tags = ID3(file_path)
+            except ID3NoHeaderError:
+                tags = ID3()
+            tags.update_to_v23()
+            for frame in tags.values():
+                if hasattr(frame, 'encoding'):
+                    frame.encoding = Encoding.UTF16
+            tags.save(file_path, v2_version=3)
+            print(f"ID3 태그를 v2.3(UTF-16)으로 변환 완료: {file_path}")
+        except Exception as e:
+            print(f"ID3 변환 오류: {e}")
+
+    @staticmethod
+    def ensure_year_tyer(file_path: str, year: str):
+        """mutagen으로 TYER(Year) 프레임에 연도 저장"""
+        try:
+            tags = ID3(file_path)
+            tags.delall('TYER')
+            tags.add(TYER(encoding=3, text=str(year)))
+            tags.save(file_path, v2_version=3)
+            print(f"TYER(Year) 프레임에 연도 저장 완료: {year}")
+        except Exception as e:
+            print(f"TYER 저장 오류: {e}")
+
+    @staticmethod
+    def save_metadata(data: Dict) -> bool:
+        """메타데이터를 MP3 파일에 저장 (ID3 v2.3, UTF-16 강제, mutagen 변환, TYER 동기화)"""
+        path = data['path']
+        try:
+            AudioFileProcessor.upgrade_id3_to_v23_utf16(path)
+            import eyed3
             audio = eyed3.load(path)
             if not audio.tag:
                 audio.initTag()
-            
-            # 장르 추천이 있으면 장르에 적용
+            if audio.tag.version != (2, 3, 0):
+                audio.tag.version = (2, 3, 0)
             if data.get('genre_suggestion', ''):
                 audio.tag.genre = data['genre_suggestion']
                 data['genre'] = data['genre_suggestion']
-            
-            # 연도 정보 처리 (추가/수정/삭제)
             year_value = data['year'].replace(" ✓", "") if data['year'] else ""
             original_year = data['original_year'] if data['original_year'] else ""
-            
-            # 연도가 변경된 경우 (추가, 수정, 삭제 모두 포함)
             if original_year != year_value:
                 if year_value and year_value.isdigit():
-                    # 연도 추가/수정
                     year_int = int(year_value)
                     audio.tag.original_release_date = eyed3.core.Date(year_int)
                     print(f"Debug: 연도 저장됨 - {data['filename']}: {year_value}")
                 else:
-                    # 연도 삭제 (빈 값으로 설정)
                     audio.tag.original_release_date = None
                     print(f"Debug: 연도 삭제됨 - {data['filename']}")
-            
             audio.tag.save()
+            # mutagen으로 TYER 프레임에도 연도 저장
+            if year_value and year_value.isdigit():
+                AudioFileProcessor.ensure_year_tyer(path, year_value)
             print(f"저장 완료: {data['filename']}")
             return True
-            
         except Exception as e:
             print(f"저장 오류 {data['filename']}: {e}")
             return False

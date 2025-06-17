@@ -4,3 +4,4 @@ openai>=1.0.0
 python-dotenv>=1.0.0
 pygame>=2.5.0
 google-api-python-client>=2.149.0 
+mutagen>=1.49.0

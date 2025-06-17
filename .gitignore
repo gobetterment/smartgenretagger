@@ -54,3 +54,6 @@ Desktop.ini
 # 임시 파일
 *.tmp
 *.temp 
+
+# 캐시 파일
+*.genre_cache.pkl
