@@ -275,120 +275,126 @@ class SmartGenreTaggerMainWindow(QMainWindow):
             print(f"Error in finish_genre_edit: {e}")
     
     def get_all_genre_suggestions(self):
-        """모든 파일에 대해 장르 추천"""
+        """모든 파일에 대해 장르 추천 (트리 순서대로, 커서 Arrow 유지)"""
         if not self.mp3_data:
             QMessageBox.information(self, "알림", "먼저 MP3 파일을 로드해주세요.")
             return
         
-        # 중지 플래그 초기화 및 버튼 상태 변경
         self.genre_stop_requested = False
         self.control_buttons.set_gpt_buttons_enabled(False)
         
-        total_files = len(self.mp3_data)
+        total_files = self.tree.topLevelItemCount()
         completed_count = 0
         
+        progress = QProgressDialog("장르 추천 중...", "취소", 0, total_files, self)
+        progress.setWindowTitle("장르 추천 진행중")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.setFixedSize(400, 120)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        
+        # 커서 Arrow로 고정
+        QApplication.setOverrideCursor(Qt.ArrowCursor)
+        
         try:
-            for i, data in enumerate(self.mp3_data):
-                # 중지 요청 확인
-                if self.genre_stop_requested:
+            for i in range(total_files):
+                if self.genre_stop_requested or progress.wasCanceled():
                     print("장르 추천이 사용자에 의해 중지되었습니다.")
+                    self.genre_stop_requested = True
                     break
-                
+                item = self.tree.topLevelItem(i)
+                data_index = self.get_data_index_from_item(item)
+                if data_index is None:
+                    continue
+                data = self.mp3_data[data_index]
+                progress.setLabelText(f"장르 추천 중... ({i+1}/{total_files})")
+                progress.setValue(i)
+                QApplication.processEvents()
                 try:
-                    # 상태 업데이트
-                    self.status_label.setText(f"🎵 장르 검색 중... ({i+1}/{total_files})")
-                    
-                    # 장르 추천 받기
                     suggestion = music_genre_service.get_genre_recommendation(
                         data['title'],
                         data['artist'],
-                        year=data.get('year', None),   # 연도 정보 추가
+                        year=data.get('year', None),
                         original_genre=data['genre']
                     )
                     data['genre_suggestion'] = suggestion
-                    
-                    # 정렬된 상태에서 올바른 트리 아이템 찾기
-                    item = self.find_tree_item_by_data_index(i)
-                    if item:
-                        item.setText(4, suggestion)
-                    
+                    item.setText(4, suggestion)
                     completed_count += 1
-                    
-                    # UI 업데이트
                     QApplication.processEvents()
-                    
                     print(f"장르 추천 완료 ({i+1}/{total_files}): {data['filename']} -> {suggestion}")
-                    
                 except Exception as e:
                     print(f"장르 추천 오류 {data['filename']}: {e}")
-        
+            progress.setValue(total_files)
         finally:
-            # 버튼 상태 복원 및 상태 업데이트
+            progress.close()
+            QApplication.restoreOverrideCursor()
             self.control_buttons.set_gpt_buttons_enabled(True)
             self.update_status()
-            
             if self.genre_stop_requested:
                 QMessageBox.information(self, "중지됨", f"장르 추천이 중지되었습니다.\n완료된 파일: {completed_count}개")
             else:
                 QMessageBox.information(self, "완료", f"총 {completed_count}개 파일의 장르 추천이 완료되었습니다.")
     
     def get_selected_genre_suggestions(self):
-        """선택된 파일들에 대해 장르 추천"""
+        """선택된 파일들에 대해 장르 추천 (트리 순서대로, 커서 Arrow 유지)"""
         selected_items = self.tree.selectedItems()
         if not selected_items:
             QMessageBox.information(self, "알림", "추천받을 항목을 선택해주세요.")
             return
         
-        # 중지 플래그 초기화 및 버튼 상태 변경
         self.genre_stop_requested = False
         self.control_buttons.set_gpt_buttons_enabled(False)
         
+        # 트리에서 선택된 항목 순서대로 진행
         total_selected = len(selected_items)
         completed_count = 0
         
+        progress = QProgressDialog("선택 항목 장르 추천 중...", "취소", 0, total_selected, self)
+        progress.setWindowTitle("장르 추천 진행중")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.setFixedSize(400, 120)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        
+        QApplication.setOverrideCursor(Qt.ArrowCursor)
+        
         try:
             for i, item in enumerate(selected_items):
-                # 중지 요청 확인
-                if self.genre_stop_requested:
+                if self.genre_stop_requested or progress.wasCanceled():
                     print("장르 추천이 사용자에 의해 중지되었습니다.")
+                    self.genre_stop_requested = True
                     break
-                
-                # 정렬된 상태에서도 올바른 데이터 인덱스 사용
                 data_index = self.get_data_index_from_item(item)
-                if data_index is not None:
-                    data = self.mp3_data[data_index]
-                    
-                    try:
-                        # 상태 업데이트
-                        self.status_label.setText(f"🎵 선택 항목 장르 검색 중... ({i+1}/{total_selected})")
-                        
-                        # 장르 추천 받기
-                        suggestion = music_genre_service.get_genre_recommendation(
-                                data['title'],
-                                data['artist'],
-                                year=data.get('year', None),   # ← 연도 정보 추가
-                                original_genre=data['genre']
-                        )
-                        data['genre_suggestion'] = suggestion
-                        
-                        # 트리 아이템 업데이트
-                        item.setText(4, suggestion)
-                        
-                        completed_count += 1
-                        
-                        # UI 업데이트
-                        QApplication.processEvents()
-                        
-                        print(f"장르 추천 완료 ({i+1}/{total_selected}): {data['filename']} -> {suggestion}")
-                        
-                    except Exception as e:
-                        print(f"장르 추천 오류 {data['filename']}: {e}")
-        
+                if data_index is None:
+                    continue
+                data = self.mp3_data[data_index]
+                progress.setLabelText(f"선택 항목 장르 추천 중... ({i+1}/{total_selected})")
+                progress.setValue(i)
+                QApplication.processEvents()
+                try:
+                    suggestion = music_genre_service.get_genre_recommendation(
+                            data['title'],
+                            data['artist'],
+                            year=data.get('year', None),
+                            original_genre=data['genre']
+                    )
+                    data['genre_suggestion'] = suggestion
+                    item.setText(4, suggestion)
+                    completed_count += 1
+                    QApplication.processEvents()
+                    print(f"장르 추천 완료 ({i+1}/{total_selected}): {data['filename']} -> {suggestion}")
+                except Exception as e:
+                    print(f"장르 추천 오류 {data['filename']}: {e}")
+            progress.setValue(total_selected)
         finally:
-            # 버튼 상태 복원 및 상태 업데이트
+            progress.close()
+            QApplication.restoreOverrideCursor()
             self.control_buttons.set_gpt_buttons_enabled(True)
             self.update_status()
-            
             if self.genre_stop_requested:
                 QMessageBox.information(self, "중지됨", f"선택 항목 장르 추천이 중지되었습니다.\n완료된 파일: {completed_count}개")
             else:
