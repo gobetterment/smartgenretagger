@@ -16,7 +16,7 @@ class Config:
     def __init__(self):
         self.spotify_client_id = self._get_spotify_client_id() if os.getenv('SPOTIFY_CLIENT_ID') else None
         self.spotify_client_secret = self._get_spotify_client_secret() if os.getenv('SPOTIFY_CLIENT_SECRET') else None
-        self.openai_api_key = self._get_openai_api_key()  # 선택사항
+        self.openai_api_key = self._get_openai_api_key()
         self.discogs_token = self._get_discogs_token()
         
     def _get_spotify_client_id(self):
@@ -38,8 +38,13 @@ class Config:
         return client_secret
         
     def _get_openai_api_key(self):
-        """OpenAI API 키를 환경변수에서 가져오기 (선택사항)"""
-        return os.getenv('OPENAI_API_KEY')
+        """OpenAI API 키를 환경변수에서 가져오기 (필수)"""
+        api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            app = QApplication(sys.argv)
+            QMessageBox.critical(None, "오류", "OPENAI_API_KEY 환경변수가 설정되지 않았습니다.\n.env 파일을 확인해주세요.")
+            sys.exit()
+        return api_key
 
     def _get_discogs_token(self):
         token = os.getenv('DISCOGS_TOKEN')

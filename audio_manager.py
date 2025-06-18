@@ -134,37 +134,43 @@ class AudioFileProcessor:
 
     @staticmethod
     def save_metadata(data: Dict) -> bool:
-        """메타데이터를 MP3 파일에 저장 (ID3 v2.3, UTF-16 강제, mutagen 변환, TYER 동기화)"""
+        """메타데이터를 MP3 파일에 저장 (mutagen만 사용, 모든 프레임 UTF-16 강제)"""
         path = data['path']
         try:
-            AudioFileProcessor.upgrade_id3_to_v23_utf16(path)
-            import eyed3
-            audio = eyed3.load(path)
-            if not audio.tag:
-                audio.initTag()
-            if audio.tag.version != (2, 3, 0):
-                audio.tag.version = (2, 3, 0)
-            if data.get('genre_suggestion', ''):
-                audio.tag.genre = data['genre_suggestion']
-                data['genre'] = data['genre_suggestion']
+            from mutagen.id3 import ID3, Encoding, TIT2, TPE1, TALB, TCON, TYER
+            # ID3 태그 로드 (없으면 생성)
+            try:
+                tags = ID3(path)
+            except Exception:
+                tags = ID3()
+            # 제목, 아티스트, 앨범, 장르, 연도 등 주요 프레임 업데이트
+            if data.get('title'):
+                tags.delall('TIT2')
+                tags.add(TIT2(encoding=Encoding.UTF16, text=data['title']))
+            if data.get('artist'):
+                tags.delall('TPE1')
+                tags.add(TPE1(encoding=Encoding.UTF16, text=data['artist']))
+            if data.get('album'):
+                tags.delall('TALB')
+                tags.add(TALB(encoding=Encoding.UTF16, text=data['album']))
+            genre = data.get('genre_suggestion') or data.get('genre')
+            if genre:
+                tags.delall('TCON')
+                tags.add(TCON(encoding=Encoding.UTF16, text=genre))
+            # 연도(TYER) 처리
             year_value = data['year'].replace(" ✓", "") if data['year'] else ""
-            original_year = data['original_year'] if data['original_year'] else ""
-            if original_year != year_value:
-                if year_value and year_value.isdigit():
-                    year_int = int(year_value)
-                    audio.tag.original_release_date = eyed3.core.Date(year_int)
-                    print(f"Debug: 연도 저장됨 - {data['filename']}: {year_value}")
-                else:
-                    audio.tag.original_release_date = None
-                    print(f"Debug: 연도 삭제됨 - {data['filename']}")
-            audio.tag.save()
-            # mutagen으로 TYER 프레임에도 연도 저장
             if year_value and year_value.isdigit():
-                AudioFileProcessor.ensure_year_tyer(path, year_value)
+                tags.delall('TYER')
+                tags.add(TYER(encoding=Encoding.UTF16, text=year_value))
+            # 모든 TextFrame의 인코딩을 UTF-16으로 강제
+            for frame in tags.values():
+                if hasattr(frame, 'encoding'):
+                    frame.encoding = Encoding.UTF16
+            tags.save(path, v2_version=3)
             print(f"저장 완료: {data['filename']}")
             return True
         except Exception as e:
-            print(f"저장 오류 {data['filename']}: {e}")
+            print(f"[ERROR] 저장 오류 {data['filename']}: {e}")
             return False
     
     @staticmethod

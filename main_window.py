@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from ui_components import (EditableTreeWidget, ControlButtonsWidget, 
                           AudioControlWidget, InlineEditor)
 from audio_manager import AudioFileProcessor, AudioPlayer
-from music_genre_service import music_genre_service
+from music_genre_service import music_genre_service, clean_title
 
 
 class SmartGenreTaggerMainWindow(QMainWindow):
@@ -16,7 +16,7 @@ class SmartGenreTaggerMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SmartGenreTagger - AI 기반 MP3 장르 태그 편집기")
-        self.setGeometry(100, 100, 1200, 600)
+        self.setGeometry(100, 100, 1200, 800)
         
         # 데이터 저장
         self.file_list = []
@@ -270,14 +270,12 @@ class SmartGenreTaggerMainWindow(QMainWindow):
             print(f"Error in finish_genre_edit: {e}")
     
     def get_all_genre_suggestions(self):
-        """모든 파일에 대해 장르 추천 (3개 병렬, 캐시 활용, UI는 트리 순서대로, 중간 저장, 연도 자동 채움)"""
+        """모든 파일에 대해 장르 추천 (3개 병렬, 캐시 활용, UI는 트리 순서대로, 중간 저장, 연도 자동 채움, 디버깅 로그 추가)"""
         if not self.mp3_data:
             QMessageBox.information(self, "알림", "먼저 MP3 파일을 로드해주세요.")
             return
-        
         self.genre_stop_requested = False
         self.control_buttons.set_gpt_buttons_enabled(False)
-        
         total_files = self.tree.topLevelItemCount()
         progress = QProgressDialog("장르 추천 중...", "취소", 0, total_files, self)
         progress.setWindowTitle("장르 추천 진행중")
@@ -288,36 +286,73 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         progress.setAutoClose(False)
         progress.setAutoReset(False)
         QApplication.setOverrideCursor(Qt.ArrowCursor)
-        
         result_list = [None] * total_files
         done_count = 0
-        
         def recommend_worker(i, data_index, data):
+            if self.genre_stop_requested:
+                print(f"[DEBUG] 중지 요청 감지: 워커 {i} 즉시 종료")
+                return (i, data_index, '', '')
+            
+            print(f"🔧 ===== 워커 {i} 시작 =====")
+            print(f"🔧 트리 인덱스: {i}")
+            print(f"🔧 데이터 인덱스: {data_index}")
+            print(f"🔧 처리할 곡: {data['title']} - {data['artist']}")
+            print(f"🔧 ==========================")
+            
+            # API 호출 전 플래그 체크
+            if self.genre_stop_requested:
+                print(f"[DEBUG] 중지 요청 감지: 워커 {i} API 호출 전 종료")
+                return (i, data_index, '', '')
             suggestion = music_genre_service.get_genre_recommendation(
                 data['title'],
                 data['artist'],
                 year=data.get('year', None),
                 original_genre=data['genre']
             )
+            
+            print(f"🔧 ===== 워커 {i} 완료 =====")
+            print(f"🔧 처리한 곡: {data['title']} - {data['artist']}")
+            print(f"🔧 추천 결과: {suggestion}")
+            print(f"🔧 반환 데이터: ({i}, {data_index}, '{suggestion}')")
+            print(f"🔧 ==========================")
+            
+            # API 호출 후 플래그 체크
+            if self.genre_stop_requested:
+                print(f"[DEBUG] 중지 요청 감지: 워커 {i} API 호출 후 종료")
+                return (i, data_index, '', '')
             # 연도 정보가 비어 있으면 MusicBrainz에서 연도도 시도
             year_value = (data.get('year', '') or '').replace(' ✓', '')
             if not year_value:
                 try:
-                    mb_result = music_genre_service._search_musicbrainz(data['title'], data['artist'])
                     import musicbrainzngs
-                    result = musicbrainzngs.search_recordings(query=f'recording:"{data["title"]}" AND artist:"{data["artist"]}"', limit=1)
+                    title_for_search = clean_title(data['title'])
+                    query = f'recording:"{title_for_search}" AND artist:"{data["artist"]}"'
+                    print(f"[DEBUG] MusicBrainz 연도 검색 쿼리: {query}")
+                    result = musicbrainzngs.search_recordings(query=query, limit=1)
                     recordings = result.get('recording-list', [])
                     mb_year = ''
                     if recordings:
                         rec = recordings[0]
+                        print(f"[DEBUG] MusicBrainz recording: {rec}")
                         if 'first-release-date' in rec and rec['first-release-date']:
                             mb_year = rec['first-release-date'][:4]
+                            print(f"[DEBUG] MusicBrainz 연도 추출 결과(first-release-date): {mb_year}")
+                        elif 'release-list' in rec and rec['release-list']:
+                            dates = []
+                            for release in rec['release-list']:
+                                if 'date' in release and release['date']:
+                                    year = release['date'][:4]
+                                    if year.isdigit():
+                                        dates.append(int(year))
+                            if dates:
+                                mb_year = str(min(dates))
+                                print(f"[DEBUG] MusicBrainz 연도 추출 결과(release-list, min): {mb_year}")
                     if mb_year and mb_year.isdigit():
                         year_value = mb_year
+                    print(f"[DEBUG] year_value 최종: {year_value}")
                 except Exception as e:
-                    print(f"연도 추출 실패: {e}")
+                    print(f"[DEBUG] 연도 추출 실패: {e}")
             return (i, data_index, suggestion, year_value)
-        
         try:
             from musicbrainzngs import musicbrainz
             with ThreadPoolExecutor(max_workers=3) as executor:
@@ -343,22 +378,33 @@ class SmartGenreTaggerMainWindow(QMainWindow):
                     progress.setLabelText(f"장르 추천 중... ({done_count}/{total_files})")
                     progress.setValue(done_count)
                     QApplication.processEvents()
-            # UI는 항상 순서대로만 채움
+            
+            # UI는 항상 순서대로만 채움 (모든 결과 수집 후)
             for i in range(total_files):
                 if result_list[i] is not None:
                     data_index, suggestion, year_value = result_list[i]
-                    def update_ui(idx=i, d_idx=data_index, sugg=suggestion, yv=year_value):
-                        item = self.tree.topLevelItem(idx)
-                        if item and d_idx is not None:
-                            self.mp3_data[d_idx]['genre_suggestion'] = sugg
-                            item.setText(4, sugg)
-                            # 연도 정보가 비어있고 새로 추출된 연도가 있으면 체크 표시와 함께 반영
-                            if (not self.mp3_data[d_idx]['year'] or self.mp3_data[d_idx]['year'].strip() == '') and yv and yv.isdigit() and len(yv) == 4:
-                                self.mp3_data[d_idx]['year'] = yv + ' ✓'
-                                self.mp3_data[d_idx]['year_added'] = True
-                                item.setText(2, self.mp3_data[d_idx]['year'])
-                                print(f"연도 자동 채움: {self.mp3_data[d_idx]['filename']} -> {self.mp3_data[d_idx]['year']}")
-                    QTimer.singleShot(0, update_ui)
+                    item = self.tree.topLevelItem(i)
+                    if item and data_index is not None:
+                        # 디버깅: 명확한 매핑 확인
+                        actual_data_index = self.get_data_index_from_item(item)
+                        print(f"🔄 ===== UI 업데이트 =====")
+                        print(f"🔄 트리 위치: {i}")
+                        print(f"🔄 결과 데이터: {self.mp3_data[data_index]['title']} - {self.mp3_data[data_index]['artist']}")
+                        print(f"🔄 결과 장르: {suggestion}")
+                        print(f"🔄 적용될 UI 곡: {item.text(0)} - {item.text(1)}")
+                        print(f"🔄 실제 데이터 인덱스: {actual_data_index}")
+                        if data_index != actual_data_index:
+                            print(f"⚠️  경고: 데이터 인덱스 불일치! {data_index} != {actual_data_index}")
+                        print(f"🔄 ========================\n")
+                        
+                        self.mp3_data[data_index]['genre_suggestion'] = suggestion
+                        item.setText(4, suggestion)
+                        # 연도 정보가 비어있고 새로 추출된 연도가 있으면 체크 표시와 함께 반영
+                        if (not self.mp3_data[data_index]['year'] or self.mp3_data[data_index]['year'].strip() == '') and year_value and year_value.isdigit() and len(year_value) == 4:
+                            self.mp3_data[data_index]['year'] = year_value + ' ✓'
+                            self.mp3_data[data_index]['year_added'] = True
+                            item.setText(2, self.mp3_data[data_index]['year'])
+                            print(f"연도 자동 채움: {self.mp3_data[data_index]['filename']} -> {self.mp3_data[data_index]['year']}")
             progress.setValue(total_files)
         finally:
             music_genre_service.save_cache()
@@ -367,12 +413,12 @@ class SmartGenreTaggerMainWindow(QMainWindow):
             self.control_buttons.set_gpt_buttons_enabled(True)
             self.update_status()
             if self.genre_stop_requested:
-                QMessageBox.information(self, "중지됨", f"장르 추천이 중지되었습니다.\n완료된 파일: {done_count}개")
+                QMessageBox.information(self, "중지됨", f"장르 추천이 중지되었습니다.\n완료된 파일: {done_count}개\n(진행 중인 작업은 곧 멈춥니다)")
             else:
                 QMessageBox.information(self, "완료", f"총 {done_count}개 파일의 장르 추천이 완료되었습니다.")
     
     def get_selected_genre_suggestions(self):
-        """선택된 파일들에 대해 장르 추천 (3개 병렬, 캐시 활용, UI는 트리 순서대로, 중간 저장, 연도 자동 채움)"""
+        """선택된 파일들에 대해 장르 추천 (3개 병렬, 캐시 활용, UI는 트리 순서대로, 중간 저장, 연도 자동 채움, 디버깅 로그 추가)"""
         selected_items = self.tree.selectedItems()
         if not selected_items:
             QMessageBox.information(self, "알림", "추천받을 항목을 선택해주세요.")
@@ -396,6 +442,9 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         done_count = 0
         
         def recommend_worker(i, data_index, data):
+            if self.genre_stop_requested:
+                print(f"[DEBUG] 중지 요청 감지: 워커 {i} 즉시 종료")
+                return (i, data_index, '', '')
             suggestion = music_genre_service.get_genre_recommendation(
                 data['title'],
                 data['artist'],
@@ -406,19 +455,34 @@ class SmartGenreTaggerMainWindow(QMainWindow):
             year_value = (data.get('year', '') or '').replace(' ✓', '')
             if not year_value:
                 try:
-                    mb_result = music_genre_service._search_musicbrainz(data['title'], data['artist'])
                     import musicbrainzngs
-                    result = musicbrainzngs.search_recordings(query=f'recording:"{data["title"]}" AND artist:"{data["artist"]}"', limit=1)
+                    title_for_search = clean_title(data['title'])
+                    query = f'recording:"{title_for_search}" AND artist:"{data["artist"]}"'
+                    print(f"[DEBUG] MusicBrainz 연도 검색 쿼리: {query}")
+                    result = musicbrainzngs.search_recordings(query=query, limit=1)
                     recordings = result.get('recording-list', [])
                     mb_year = ''
                     if recordings:
                         rec = recordings[0]
+                        print(f"[DEBUG] MusicBrainz recording: {rec}")
                         if 'first-release-date' in rec and rec['first-release-date']:
                             mb_year = rec['first-release-date'][:4]
+                            print(f"[DEBUG] MusicBrainz 연도 추출 결과(first-release-date): {mb_year}")
+                        elif 'release-list' in rec and rec['release-list']:
+                            dates = []
+                            for release in rec['release-list']:
+                                if 'date' in release and release['date']:
+                                    year = release['date'][:4]
+                                    if year.isdigit():
+                                        dates.append(int(year))
+                            if dates:
+                                mb_year = str(min(dates))
+                                print(f"[DEBUG] MusicBrainz 연도 추출 결과(release-list, min): {mb_year}")
                     if mb_year and mb_year.isdigit():
                         year_value = mb_year
+                    print(f"[DEBUG] year_value 최종: {year_value}")
                 except Exception as e:
-                    print(f"연도 추출 실패: {e}")
+                    print(f"[DEBUG] 연도 추출 실패: {e}")
             return (i, data_index, suggestion, year_value)
         
         try:
@@ -445,22 +509,33 @@ class SmartGenreTaggerMainWindow(QMainWindow):
                     progress.setLabelText(f"선택 항목 장르 추천 중... ({done_count}/{total_selected})")
                     progress.setValue(done_count)
                     QApplication.processEvents()
-            # UI는 항상 순서대로만 채움
+            
+            # UI는 항상 순서대로만 채움 (모든 결과 수집 후)
             for i in range(total_selected):
                 if result_list[i] is not None:
                     data_index, suggestion, year_value = result_list[i]
-                    def update_ui(idx=i, d_idx=data_index, sugg=suggestion, yv=year_value):
-                        item = selected_items[idx]
-                        if item and d_idx is not None:
-                            self.mp3_data[d_idx]['genre_suggestion'] = sugg
-                            item.setText(4, sugg)
-                            # 연도 정보가 비어있고 새로 추출된 연도가 있으면 체크 표시와 함께 반영
-                            if (not self.mp3_data[d_idx]['year'] or self.mp3_data[d_idx]['year'].strip() == '') and yv and yv.isdigit() and len(yv) == 4:
-                                self.mp3_data[d_idx]['year'] = yv + ' ✓'
-                                self.mp3_data[d_idx]['year_added'] = True
-                                item.setText(2, self.mp3_data[d_idx]['year'])
-                                print(f"연도 자동 채움: {self.mp3_data[d_idx]['filename']} -> {self.mp3_data[d_idx]['year']}")
-                    QTimer.singleShot(0, update_ui)
+                    item = selected_items[i]
+                    if item and data_index is not None:
+                        # 디버깅: 명확한 매핑 확인
+                        actual_data_index = self.get_data_index_from_item(item)
+                        print(f"🔄 ===== UI 업데이트 =====")
+                        print(f"🔄 트리 위치: {i}")
+                        print(f"🔄 결과 데이터: {self.mp3_data[data_index]['title']} - {self.mp3_data[data_index]['artist']}")
+                        print(f"🔄 결과 장르: {suggestion}")
+                        print(f"🔄 적용될 UI 곡: {item.text(0)} - {item.text(1)}")
+                        print(f"🔄 실제 데이터 인덱스: {actual_data_index}")
+                        if data_index != actual_data_index:
+                            print(f"⚠️  경고: 데이터 인덱스 불일치! {data_index} != {actual_data_index}")
+                        print(f"🔄 ========================\n")
+                        
+                        self.mp3_data[data_index]['genre_suggestion'] = suggestion
+                        item.setText(4, suggestion)
+                        # 연도 정보가 비어있고 새로 추출된 연도가 있으면 체크 표시와 함께 반영
+                        if (not self.mp3_data[data_index]['year'] or self.mp3_data[data_index]['year'].strip() == '') and year_value and year_value.isdigit() and len(year_value) == 4:
+                            self.mp3_data[data_index]['year'] = year_value + ' ✓'
+                            self.mp3_data[data_index]['year_added'] = True
+                            item.setText(2, self.mp3_data[data_index]['year'])
+                            print(f"연도 자동 채움: {self.mp3_data[data_index]['filename']} -> {self.mp3_data[data_index]['year']}")
             progress.setValue(total_selected)
         finally:
             music_genre_service.save_cache()
@@ -473,17 +548,44 @@ class SmartGenreTaggerMainWindow(QMainWindow):
             else:
                 QMessageBox.information(self, "완료", f"선택된 {done_count}개 파일의 장르 추천이 완료되었습니다.")
     
+    def genre_in_suggestion(self, genre, suggestion):
+        """여러 장르가 /로 구분되어 있을 때 각 장르가 추천값에 포함되는지 체크"""
+        for g in genre.split('/'):
+            if g.strip().lower() and g.strip().lower() in suggestion.lower():
+                return True
+        return False
+
     def save_all_changes(self):
-        """모든 변경사항을 저장 (장르/연도 조건별 저장, 저장 후 연도 체크 제거, 추천장르 저장 시 컬럼 비움, strip 비교)"""
+        """모든 변경사항을 저장 (유저 직접 수정시 무조건 저장, 장르 컬럼 즉시 갱신, 캐시 반영)"""
         saved_count = 0
         error_count = 0
         for i, data in enumerate(self.mp3_data):
+            item = self.find_tree_item_by_data_index(i)
+            if item:
+                data['genre_suggestion'] = item.text(4).strip()
+        for i, data in enumerate(self.mp3_data):
+            item = self.find_tree_item_by_data_index(i)
             genre_suggestion = (data.get('genre_suggestion', '') or '').strip()
             genre = (data.get('genre', '') or '').strip()
             year = data.get('year', '')
             original_year = data.get('original_year', '')
             year_changed = (year.replace(" ✓", "") != (original_year or ""))
-            if genre_suggestion and genre_suggestion != genre:
+            # 유저가 직접 추천 장르를 수정한 경우(트리의 추천 장르 컬럼 값이 기존 장르와 다르면) 무조건 저장
+            user_edited = item and item.text(4).strip() and item.text(4).strip() != genre
+            if user_edited:
+                data['genre_suggestion'] = item.text(4).strip()
+                genre_suggestion = data['genre_suggestion']
+            # 기존 장르가 추천값에 하나라도 포함되어 있으면 추천값 저장, 완전히 다를 때만 기존 장르로 대체 (단, 직접 수정한 경우는 무조건 저장)
+            if not user_edited and genre_suggestion and genre and not self.genre_in_suggestion(genre, genre_suggestion):
+                data['genre_suggestion'] = genre
+                if item:
+                    item.setText(4, genre)
+            genre_suggestion = (data.get('genre_suggestion', '') or '').strip()
+            # 추천값이 있거나, 추천 없이 직접 입력한 값이 기존 장르와 다르면 저장
+            if (genre_suggestion and genre_suggestion != genre) or user_edited or (not genre_suggestion and item and item.text(4).strip() and item.text(4).strip() != genre):
+                if not genre_suggestion and item and item.text(4).strip():
+                    data['genre_suggestion'] = item.text(4).strip()
+                    genre_suggestion = data['genre_suggestion']
                 if AudioFileProcessor.save_metadata(data):
                     saved_count += 1
                     data['genre'] = genre_suggestion
@@ -491,11 +593,11 @@ class SmartGenreTaggerMainWindow(QMainWindow):
                     clean_year = year.replace(" ✓", "")
                     data['year'] = clean_year
                     data['original_year'] = clean_year
-                    item = self.find_tree_item_by_data_index(i)
                     if item:
                         item.setText(3, data['genre'])
                         item.setText(2, clean_year)
                         item.setText(4, "")
+                    music_genre_service.set_cached_genre(data['title'], data['artist'], clean_year, data['genre'])
                 else:
                     error_count += 1
             elif year_changed:
@@ -504,7 +606,6 @@ class SmartGenreTaggerMainWindow(QMainWindow):
                     clean_year = year.replace(" ✓", "")
                     data['year'] = clean_year
                     data['original_year'] = clean_year
-                    item = self.find_tree_item_by_data_index(i)
                     if item:
                         item.setText(2, clean_year)
                 else:
@@ -518,7 +619,7 @@ class SmartGenreTaggerMainWindow(QMainWindow):
             QMessageBox.information(self, "저장 완료", "저장할 변경사항이 없습니다.")
     
     def save_selected_items(self):
-        """선택된 항목들 저장 (장르/연도 조건별 저장, 저장 후 연도 체크 제거, 추천장르 저장 시 컬럼 비움, strip 비교)"""
+        """선택된 항목들 저장 (유저 직접 수정시 무조건 저장, 장르 컬럼 즉시 갱신, 캐시 반영)"""
         selected_items = self.tree.selectedItems()
         if not selected_items:
             QMessageBox.information(self, "알림", "저장할 항목을 선택해주세요.")
@@ -528,13 +629,28 @@ class SmartGenreTaggerMainWindow(QMainWindow):
         for item in selected_items:
             data_index = self.get_data_index_from_item(item)
             if data_index is not None:
+                self.mp3_data[data_index]['genre_suggestion'] = item.text(4).strip()
+        for item in selected_items:
+            data_index = self.get_data_index_from_item(item)
+            if data_index is not None:
                 data = self.mp3_data[data_index]
                 genre_suggestion = (data.get('genre_suggestion', '') or '').strip()
                 genre = (data.get('genre', '') or '').strip()
                 year = data.get('year', '')
                 original_year = data.get('original_year', '')
                 year_changed = (year.replace(" ✓", "") != (original_year or ""))
-                if genre_suggestion and genre_suggestion != genre:
+                user_edited = item and item.text(4).strip() and item.text(4).strip() != genre
+                if user_edited:
+                    data['genre_suggestion'] = item.text(4).strip()
+                    genre_suggestion = data['genre_suggestion']
+                if not user_edited and genre_suggestion and genre and not self.genre_in_suggestion(genre, genre_suggestion):
+                    data['genre_suggestion'] = genre
+                    item.setText(4, genre)
+                genre_suggestion = (data.get('genre_suggestion', '') or '').strip()
+                if (genre_suggestion and genre_suggestion != genre) or user_edited or (not genre_suggestion and item and item.text(4).strip() and item.text(4).strip() != genre):
+                    if not genre_suggestion and item and item.text(4).strip():
+                        data['genre_suggestion'] = item.text(4).strip()
+                        genre_suggestion = data['genre_suggestion']
                     if AudioFileProcessor.save_metadata(data):
                         saved_count += 1
                         data['genre'] = genre_suggestion
@@ -545,6 +661,7 @@ class SmartGenreTaggerMainWindow(QMainWindow):
                         item.setText(3, data['genre'])
                         item.setText(2, clean_year)
                         item.setText(4, "")
+                        music_genre_service.set_cached_genre(data['title'], data['artist'], clean_year, data['genre'])
                     else:
                         error_count += 1
                 elif year_changed:
@@ -679,6 +796,7 @@ class SmartGenreTaggerMainWindow(QMainWindow):
     def stop_genre_recommendations(self):
         """장르 추천 중지"""
         self.genre_stop_requested = True
+        self.status_label.setText("⏹️ 장르 추천 취소 중... (진행 중인 작업은 곧 멈춥니다)")
         print("장르 추천 중지 요청됨")
     
     def clear_genre_recommendations(self):
