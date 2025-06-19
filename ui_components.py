@@ -130,6 +130,7 @@ class ControlButtonsWidget(QWidget):
     gpt_clear_requested = Signal()
     save_selected_requested = Signal()
     save_all_requested = Signal()
+    csv_export_requested = Signal()
     
     def __init__(self):
         super().__init__()
@@ -170,6 +171,11 @@ class ControlButtonsWidget(QWidget):
         self.btn_save_all = QPushButton("💾 전체 저장")
         self.btn_save_all.clicked.connect(self.save_all_requested.emit)
         layout.addWidget(self.btn_save_all)
+        
+        # CSV 내보내기 버튼
+        self.btn_csv_export = QPushButton("📊 CSV 내보내기")
+        self.btn_csv_export.clicked.connect(self.csv_export_requested.emit)
+        layout.addWidget(self.btn_csv_export)
         
         layout.addStretch()
     

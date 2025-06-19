@@ -57,3 +57,6 @@ Desktop.ini
 
 # 캐시 파일
 *.genre_cache.pkl
+
+# 문서
+*.md
